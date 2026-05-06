@@ -3,6 +3,7 @@ import logging
 import re
 import time
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -86,10 +87,18 @@ def parse_company_and_title(raw_title: str) -> tuple[str, str]:
     if not cleaned:
         return "Unknown company", "Unknown role"
 
+    hiring_match = re.match(r"^(?P<company>.+?)\s+is hiring\s+(?P<title>.+)$", cleaned, flags=re.IGNORECASE)
+    if hiring_match:
+        return normalize_company_name(hiring_match.group("company")), normalize_title_name(hiring_match.group("title"))
+
+    hiring_dash_match = re.match(r"^Hiring\s+(?P<title>.+?)\s+[\-–—]\s+(?P<company>.+)$", cleaned, flags=re.IGNORECASE)
+    if hiring_dash_match:
+        return normalize_company_name(hiring_dash_match.group("company")), normalize_title_name(hiring_dash_match.group("title"))
+
     if "|" in cleaned:
         company, title = (compact_text(part) for part in cleaned.split("|", 1))
         if company and title:
-            return company, title
+            return normalize_company_name(company), normalize_title_name(title)
 
     lowered = cleaned.lower()
     if " at " in lowered:
@@ -97,15 +106,32 @@ def parse_company_and_title(raw_title: str) -> tuple[str, str]:
         title = compact_text(cleaned[:split_at])
         company = compact_text(cleaned[split_at + 4 :])
         if company and title:
-            return company, title
+            return normalize_company_name(company), normalize_title_name(title)
 
     for separator in (" - ", " – ", " — ", ": "):
         if separator in cleaned:
             left, right = (compact_text(part) for part in cleaned.split(separator, 1))
             if left and right and len(left.split()) <= 5:
-                return left, right
+                return normalize_company_name(left), normalize_title_name(right)
 
-    return "Unknown company", cleaned
+    return "Unknown company", normalize_title_name(cleaned)
+
+
+def normalize_company_name(company: str) -> str:
+    cleaned = compact_text(company)
+    cleaned = re.sub(r"\s*\((YC|yc)\s+[A-Z0-9]+\)", "", cleaned)
+    cleaned = re.sub(r"\s*\([^)]*Y\s?C[^)]*\)", "", cleaned)
+    cleaned = re.sub(r"\s+Hiring$", "", cleaned, flags=re.IGNORECASE)
+    return compact_text(cleaned) or "Unknown company"
+
+
+def normalize_title_name(title: str) -> str:
+    cleaned = compact_text(title)
+    cleaned = re.sub(r"^[-–—:;,]+\s*", "", cleaned)
+    cleaned = re.sub(r"^(a|an)\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*\((YC|yc)\s+[A-Z0-9]+\)", "", cleaned)
+    cleaned = re.sub(r"\s*\([^)]*Y\s?C[^)]*\)", "", cleaned)
+    return compact_text(cleaned) or "Unknown role"
 
 
 def classify_location(text: str, location_keywords: dict[str, str]) -> str:
@@ -161,7 +187,8 @@ def job_exists(session: SessionLocal, source: str, company: str, title: str) -> 
 
 def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], ingest_config: dict[str, Any]) -> int:
     payload = fetch_json(source_config["url"])
-    inserted = 0
+    jobs_to_insert: list[Job] = []
+    seen_keys: set[str] = set()
 
     for hit in iter_hn_jobs(payload):
         raw_title = compact_text(hit.get("title") or hit.get("story_title"))
@@ -169,11 +196,13 @@ def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], inges
         source_url = compact_text(hit.get("url") or hit.get("story_url") or "")
         company, title = parse_company_and_title(raw_title)
         searchable_text = " ".join(part for part in (raw_title, description) if part)
+        dedupe_key = source_url or f"{company}::{title}"
 
-        if job_exists(session, source_config["name"], company, title):
+        if dedupe_key in seen_keys:
             continue
+        seen_keys.add(dedupe_key)
 
-        session.add(
+        jobs_to_insert.append(
             Job(
                 title=title,
                 company=company,
@@ -184,9 +213,12 @@ def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], inges
                 summary=build_summary(description, source_url),
             )
         )
-        inserted += 1
 
-    return inserted
+    session.execute(delete(Job).where(Job.source == source_config["name"]))
+    for job in jobs_to_insert:
+        session.add(job)
+
+    return len(jobs_to_insert)
 
 
 def write_ingest_state(summary: dict[str, Any]) -> None:
@@ -199,6 +231,10 @@ def run_ingest_cycle() -> int:
     ingest_config = load_ingest_config()
     inserted_by_source: dict[str, int] = {}
     errors: list[str] = []
+
+    total_jobs = 0
+    unknown_company_jobs = 0
+    remote_jobs = 0
 
     with SessionLocal() as session:
         for source_config in ingest_config.get("sources", []):
@@ -223,11 +259,19 @@ def run_ingest_cycle() -> int:
                 session.commit()
                 log.info("removed %s demo-seed jobs", deleted)
 
+        total_jobs = session.query(Job).count()
+        unknown_company_jobs = session.query(Job).where(Job.company == "Unknown company").count()
+        remote_jobs = session.query(Job).where(Job.location == "Remote").count()
+
     write_ingest_state(
         {
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "sources": inserted_by_source,
             "errors": errors,
             "poll_interval_seconds": ingest_config.get("poll_interval_seconds", 1800),
+            "total_jobs": total_jobs,
+            "unknown_company_jobs": unknown_company_jobs,
+            "remote_jobs": remote_jobs,
         }
     )
     return int(ingest_config.get("poll_interval_seconds", 1800))

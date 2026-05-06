@@ -12,8 +12,27 @@
         <p class="eyebrow">TrashPanda</p>
         <h1>Prioritized job pipeline</h1>
         <p class="lede">
-          First milestone dashboard: jobs are stored in Postgres, scored, and rendered here through the app API.
+          First milestone dashboard: live jobs are ingested, stored in Postgres, scored with lightweight heuristics, and rendered here through the app API.
         </p>
+      </section>
+
+      <section class="metrics" id="metrics">
+        <article class="metric-card">
+          <p class="metric-label">Total jobs</p>
+          <p class="metric-value" id="metric-total">--</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Remote</p>
+          <p class="metric-value" id="metric-remote">--</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Unknown company</p>
+          <p class="metric-value" id="metric-unknown">--</p>
+        </article>
+        <article class="metric-card metric-card-wide">
+          <p class="metric-label">Ingest status</p>
+          <p class="metric-note" id="ingest-summary">Loading ingest status...</p>
+        </article>
       </section>
 
       <section class="panel">
@@ -22,7 +41,23 @@
             <h2>Scored queue</h2>
             <p id="status-text">Loading jobs from the API...</p>
           </div>
-          <button id="refresh-button" type="button">Refresh</button>
+          <div class="panel-actions">
+            <label class="search-field">
+              <span>Search</span>
+              <input id="search-input" type="search" placeholder="Role, company, keyword">
+            </label>
+            <label class="filter-field">
+              <span>Location</span>
+              <select id="location-filter">
+                <option value="all">All</option>
+                <option value="Remote">Remote</option>
+                <option value="Hybrid">Hybrid</option>
+                <option value="On-site">On-site</option>
+                <option value="Unknown">Unknown</option>
+              </select>
+            </label>
+            <button id="refresh-button" type="button">Refresh</button>
+          </div>
         </div>
         <div id="jobs" class="jobs"></div>
       </section>

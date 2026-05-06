@@ -22,3 +22,18 @@ class HealthResponse(BaseModel):
     database: str
     ai_base_url: str
     ai_model: str
+
+
+class IngestSourceResponse(BaseModel):
+    name: str
+    inserted: int
+
+
+class IngestStateResponse(BaseModel):
+    updated_at: datetime | None = None
+    poll_interval_seconds: int
+    total_jobs: int
+    unknown_company_jobs: int
+    remote_jobs: int
+    errors: list[str]
+    sources: list[IngestSourceResponse]
