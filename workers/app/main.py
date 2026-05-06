@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from sqlalchemy import delete, select
 
@@ -27,6 +27,11 @@ STATE_PATH = Path(settings.data_dir) / "ingest-state.json"
 DEFAULT_INGEST_CONFIG: dict[str, Any] = {
     "poll_interval_seconds": 1800,
     "sources": [
+        {
+            "name": "remoteok-jobs",
+            "kind": "remote_ok",
+            "url": "https://remoteok.com/api",
+        },
         {
             "name": "hn-jobs",
             "kind": "hn_algolia",
@@ -184,7 +189,8 @@ def build_summary(description: str, source_url: str) -> str:
 
 
 def fetch_json(url: str) -> dict[str, Any]:
-    with urlopen(url, timeout=20) as response:
+    request = Request(url, headers={"User-Agent": "TrashPanda/0.1 (+self-hosted job ingestion)"})
+    with urlopen(request, timeout=20) as response:
         return json.load(response)
 
 
@@ -194,6 +200,85 @@ def iter_hn_jobs(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
         if not raw_title:
             continue
         yield hit
+
+
+def iter_remoteok_jobs(payload: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("id"):
+            continue
+        if not compact_text(item.get("position")):
+            continue
+        yield item
+
+
+def ingest_remoteok_source(session: SessionLocal, source_config: dict[str, Any], ingest_config: dict[str, Any]) -> int:
+    payload = fetch_json(source_config["url"])
+    existing_jobs = {
+        job.source_key or build_source_key(job.source_url or "", job.company, job.title): job
+        for job in session.query(Job).filter(Job.source == source_config["name"]).all()
+    }
+    seen_keys: set[str] = set()
+
+    for item in iter_remoteok_jobs(payload):
+        title = normalize_title_name(compact_text(item.get("position")))
+        company = normalize_company_name(compact_text(item.get("company")))
+        location = compact_text(item.get("location")) or "Remote"
+        tags = " ".join(compact_text(tag) for tag in item.get("tags", []) if compact_text(tag))
+        description = strip_html(item.get("description"))
+        source_url = compact_text(item.get("url"))
+        searchable_text = " ".join(part for part in (title, company, location, tags, description) if part)
+        dedupe_key = build_source_key(source_url, company, title)
+
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+
+        summary = build_summary(" ".join(part for part in (location, tags, description) if part), source_url)
+        score = compute_score(searchable_text, ingest_config["score_keywords"])
+        next_action = infer_initial_next_action(company, location, title, summary, score)
+
+        job = existing_jobs.get(dedupe_key)
+        if job is None:
+            job = Job(
+                title=title,
+                company=company,
+                location=location,
+                source=source_config["name"],
+                source_key=dedupe_key,
+                source_url=source_url or None,
+                score=score,
+                status="queued",
+                next_action=next_action,
+                tailoring_required=next_action == "resume_tailoring",
+                summary=summary,
+            )
+        else:
+            job.title = title
+            job.company = company
+            job.location = location
+            job.source_key = dedupe_key
+            job.source_url = source_url or None
+            job.score = score
+            job.summary = summary
+            if job.status not in {"applied", "not_interested", "archived", "shortlisted"}:
+                job.status = "queued"
+                job.next_action = next_action
+                if not job.tailored_resume_exists:
+                    job.tailoring_required = next_action == "resume_tailoring"
+
+        session.add(job)
+
+    stale_job_ids = [
+        job.id
+        for key, job in existing_jobs.items()
+        if key not in seen_keys and job.status in {"discovered", "queued"} and job.applied_at is None and not job.decision_reason
+    ]
+    if stale_job_ids:
+        session.execute(delete(Job).where(Job.id.in_(stale_job_ids)))
+
+    return len(seen_keys)
 
 
 def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], ingest_config: dict[str, Any]) -> int:
@@ -279,11 +364,14 @@ def run_ingest_cycle() -> int:
     with SessionLocal() as session:
         for source_config in ingest_config.get("sources", []):
             try:
-                if source_config.get("kind") != "hn_algolia":
+                if source_config.get("kind") == "hn_algolia":
+                    inserted = ingest_hn_source(session, source_config, ingest_config)
+                elif source_config.get("kind") == "remote_ok":
+                    inserted = ingest_remoteok_source(session, source_config, ingest_config)
+                else:
                     errors.append(f"unsupported source kind: {source_config.get('kind')}")
                     continue
 
-                inserted = ingest_hn_source(session, source_config, ingest_config)
                 inserted_by_source[source_config["name"]] = inserted
                 log.info("source %s inserted %s jobs", source_config["name"], inserted)
             except URLError as error:

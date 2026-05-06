@@ -14,6 +14,9 @@ const throughputMetricElement = document.getElementById('metric-throughput');
 const ingestSummaryElement = document.getElementById('ingest-summary');
 const nextActionSummaryElement = document.getElementById('next-action-summary');
 const nextActionLaneElement = document.getElementById('next-action-lane');
+const masterResumeInput = document.getElementById('master-resume-input');
+const masterResumeStatusElement = document.getElementById('master-resume-status');
+const saveMasterResumeButton = document.getElementById('save-master-resume-button');
 const bucketListElement = document.getElementById('bucket-list');
 const feedHealthElement = document.getElementById('feed-health');
 const stateMachineElement = document.getElementById('state-machine');
@@ -54,6 +57,13 @@ let latestDashboardSummary = null;
 let activeBucket = 'queue';
 let activeNextAction = 'all';
 const selectedJobIds = new Set();
+
+function formatTimestamp(value) {
+  if (!value) {
+    return 'never';
+  }
+  return new Date(value).toLocaleString();
+}
 
 function formatRelativeTime(value) {
   if (!value) {
@@ -220,6 +230,12 @@ function renderFeedHealth() {
   feedHealthElement.innerHTML = feedItems;
   const errorSummary = latestIngestState.errors.length ? `Errors: ${latestIngestState.errors.join(' | ')}` : 'No ingest errors';
   ingestSummaryElement.textContent = `${latestIngestState.feed_count} feeds active · ${formatRelativeTime(latestIngestState.updated_at)} · ${errorSummary}`;
+}
+
+function renderMasterResume(resume) {
+  masterResumeInput.value = resume?.content || '';
+  const contentState = resume?.content ? 'Master resume ready for scoring and tailoring.' : 'No master resume saved yet.';
+  masterResumeStatusElement.textContent = `${contentState} Last updated ${formatTimestamp(resume?.updated_at)}.`;
 }
 
 function renderStateMachine() {
@@ -405,6 +421,33 @@ async function updateJob(jobId, payload) {
   return response.json();
 }
 
+async function loadMasterResume() {
+  const response = await fetch('/api/v1/master-resume');
+  if (!response.ok) {
+    throw new Error(`Master resume returned ${response.status}`);
+  }
+  return response.json();
+}
+
+async function saveMasterResume() {
+  const response = await fetch('/api/v1/master-resume', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      content: masterResumeInput.value,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Master resume update failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
 async function batchUpdateJobs(payload) {
   const response = await fetch('/api/v1/jobs/batch-update', {
     method: 'POST',
@@ -568,11 +611,13 @@ async function loadJobs() {
     allJobs = await jobsResponse.json();
     await loadIngestState();
     await loadDashboardSummary();
+    renderMasterResume(await loadMasterResume());
     renderView();
   } catch (error) {
     jobsElement.innerHTML = '<div class="empty">Dashboard could not reach the backend.</div>';
     statusElement.textContent = `Load failed: ${error.message}`;
     ingestSummaryElement.textContent = 'Ingest status unavailable.';
+    masterResumeStatusElement.textContent = 'Master resume unavailable.';
   }
 }
 
@@ -662,6 +707,16 @@ batchSnoozeButton.addEventListener('click', async () => {
     await runBatchAction('snooze');
   } catch (error) {
     statusElement.textContent = `Batch update failed: ${error.message}`;
+  }
+});
+
+saveMasterResumeButton.addEventListener('click', async () => {
+  try {
+    const updatedResume = await saveMasterResume();
+    renderMasterResume(updatedResume);
+    masterResumeStatusElement.textContent = `Master resume saved. Last updated ${formatTimestamp(updatedResume.updated_at)}.`;
+  } catch (error) {
+    masterResumeStatusElement.textContent = `Save failed: ${error.message}`;
   }
 });
 

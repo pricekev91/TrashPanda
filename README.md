@@ -66,7 +66,9 @@ cp .env.example .env
 docker compose -f deploy/compose.yaml up --build
 ```
 
-The worker now ingests live jobs from the sources defined in `deploy/runtime/config/ingest-sources.json` and writes ingest state snapshots into `deploy/runtime/data/`. Those directories are mounted into the containers through `deploy/compose.yaml`.
+The worker now ingests live jobs from the sources defined in `deploy/runtime/config/ingest-sources.json` and writes ingest state snapshots into `deploy/runtime/data/`. The default runtime config now includes `Remote OK` as the first mainstream public job-board source because it exposes a stable public JSON feed without auth or brittle scraping.
+
+The dashboard also persists a master resume in `deploy/runtime/data/master-resume.md` through the API so later scoring and tailoring work can operate against a real canonical resume instead of placeholder text.
 
 Endpoints:
 

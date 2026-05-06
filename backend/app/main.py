@@ -19,6 +19,8 @@ from backend.app.schemas import (
     IngestStateResponse,
     JobResponse,
     JobUpdateRequest,
+    MasterResumeResponse,
+    MasterResumeUpdateRequest,
     ScoreExplanationResponse,
 )
 
@@ -37,6 +39,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TrashPanda API", version="0.1.0", lifespan=lifespan)
+MASTER_RESUME_PATH = Path(settings.data_dir) / "master-resume.md"
 
 
 def as_utc(value: datetime | None) -> datetime | None:
@@ -283,6 +286,24 @@ def load_ingest_state() -> dict:
         return json.load(handle)
 
 
+def read_master_resume() -> MasterResumeResponse:
+    if not MASTER_RESUME_PATH.exists():
+        return MasterResumeResponse(content="", updated_at=None)
+
+    stats = MASTER_RESUME_PATH.stat()
+    updated_at = datetime.fromtimestamp(stats.st_mtime, tz=timezone.utc)
+    return MasterResumeResponse(
+        content=MASTER_RESUME_PATH.read_text(encoding="utf-8"),
+        updated_at=updated_at,
+    )
+
+
+def write_master_resume(content: str) -> MasterResumeResponse:
+    MASTER_RESUME_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MASTER_RESUME_PATH.write_text(content.strip() + "\n", encoding="utf-8")
+    return read_master_resume()
+
+
 @app.get("/health", response_model=HealthResponse)
 def health(db: Session = Depends(get_db)) -> HealthResponse:
     db.execute(text("SELECT 1"))
@@ -397,6 +418,19 @@ def dashboard_summary(
         pipeline_throughput=pipeline_throughput,
         updated_at=state.get("updated_at"),
     )
+
+
+@app.get("/api/v1/master-resume", response_model=MasterResumeResponse)
+def get_master_resume() -> MasterResumeResponse:
+    return read_master_resume()
+
+
+@app.put("/api/v1/master-resume", response_model=MasterResumeResponse)
+def update_master_resume(payload: MasterResumeUpdateRequest) -> MasterResumeResponse:
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Master resume cannot be empty")
+    return write_master_resume(content)
 
 
 @app.patch("/api/v1/jobs/{job_id}", response_model=JobResponse)

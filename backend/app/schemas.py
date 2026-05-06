@@ -78,6 +78,15 @@ class DashboardSummaryResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class MasterResumeResponse(BaseModel):
+    content: str
+    updated_at: datetime | None = None
+
+
+class MasterResumeUpdateRequest(BaseModel):
+    content: str
+
+
 class JobUpdateRequest(BaseModel):
     status: str | None = None
     next_action: str | None = None
