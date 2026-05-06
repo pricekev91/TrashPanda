@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TrashPanda Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">TrashPanda</p>
+        <h1>Prioritized job pipeline</h1>
+        <p class="lede">
+          First milestone dashboard: jobs are stored in Postgres, scored, and rendered here through the app API.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Scored queue</h2>
+            <p id="status-text">Loading jobs from the API...</p>
+          </div>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
+        <div id="jobs" class="jobs"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

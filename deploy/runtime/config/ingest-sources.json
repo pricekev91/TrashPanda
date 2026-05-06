@@ -1,0 +1,30 @@
+{
+  "poll_interval_seconds": 1800,
+  "sources": [
+    {
+      "name": "hn-jobs",
+      "kind": "hn_algolia",
+      "url": "https://hn.algolia.com/api/v1/search_by_date?tags=job&hitsPerPage=40"
+    }
+  ],
+  "score_keywords": {
+    "platform": 18,
+    "infrastructure": 16,
+    "site reliability": 16,
+    "sre": 14,
+    "devops": 14,
+    "kubernetes": 12,
+    "terraform": 10,
+    "cloud": 10,
+    "automation": 10,
+    "linux": 8,
+    "python": 6,
+    "backend": 4
+  },
+  "location_keywords": {
+    "remote": "Remote",
+    "hybrid": "Hybrid",
+    "onsite": "On-site",
+    "on-site": "On-site"
+  }
+}
