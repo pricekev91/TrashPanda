@@ -3,19 +3,57 @@ const statusElement = document.getElementById('status-text');
 const refreshButton = document.getElementById('refresh-button');
 const totalMetricElement = document.getElementById('metric-total');
 const appliedMetricElement = document.getElementById('metric-applied');
-const ghostedMetricElement = document.getElementById('metric-ghosted');
-const ghostedPercentElement = document.getElementById('metric-ghosted-percent');
 const flightMetricElement = document.getElementById('metric-flight');
 const flightWindowElement = document.getElementById('metric-flight-window');
-const feedsMetricElement = document.getElementById('metric-feeds');
+const followUpsMetricElement = document.getElementById('metric-follow-ups');
+const ghostedPercentElement = document.getElementById('metric-ghosted-percent');
+const appsDayMetricElement = document.getElementById('metric-apps-day');
+const appsWeekMetricElement = document.getElementById('metric-apps-week');
+const timeToApplyMetricElement = document.getElementById('metric-time-to-apply');
+const throughputMetricElement = document.getElementById('metric-throughput');
 const ingestSummaryElement = document.getElementById('ingest-summary');
+const nextActionSummaryElement = document.getElementById('next-action-summary');
+const nextActionLaneElement = document.getElementById('next-action-lane');
+const bucketListElement = document.getElementById('bucket-list');
+const feedHealthElement = document.getElementById('feed-health');
+const stateMachineElement = document.getElementById('state-machine');
 const searchInput = document.getElementById('search-input');
-const statusFilter = document.getElementById('status-filter');
+const nextActionFilter = document.getElementById('next-action-filter');
 const windowFilter = document.getElementById('window-filter');
+const selectAllVisibleInput = document.getElementById('select-all-visible');
+const batchStatusElement = document.getElementById('batch-status');
+const batchAppliedDateInput = document.getElementById('batch-applied-date');
+const batchReasonInput = document.getElementById('batch-reason');
+const batchApplyButton = document.getElementById('batch-apply-button');
+const batchNotInterestedButton = document.getElementById('batch-not-interested-button');
+const batchReturnButton = document.getElementById('batch-return-button');
+const batchSnoozeButton = document.getElementById('batch-snooze-button');
+
+const BUCKETS = [
+  { key: 'queue', label: 'Queue' },
+  { key: 'shortlist', label: 'Shortlist' },
+  { key: 'applied', label: 'Applied' },
+  { key: 'in_flight', label: 'In-Flight' },
+  { key: 'ghosted', label: 'Ghosted' },
+  { key: 'archived', label: 'Archived' },
+  { key: 'not_interested', label: 'Not Interested' },
+  { key: 'all', label: 'All' },
+];
+
+const NEXT_ACTIONS = [
+  { key: 'apply_now', label: 'Apply now' },
+  { key: 'resume_tailoring', label: 'Needs resume tailoring' },
+  { key: 'research', label: 'Needs research' },
+  { key: 'follow_up', label: 'Needs follow-up' },
+  { key: 'archive', label: 'Ready to archive' },
+];
 
 let allJobs = [];
 let latestIngestState = null;
 let latestDashboardSummary = null;
+let activeBucket = 'queue';
+let activeNextAction = 'all';
+const selectedJobIds = new Set();
 
 function formatRelativeTime(value) {
   if (!value) {
@@ -32,48 +70,11 @@ function formatRelativeTime(value) {
   }
 
   const diffHours = Math.round(diffMinutes / 60);
-  return `updated ${diffHours}h ago`;
-}
-
-function updateMetrics(ingestState, dashboardSummary, jobs) {
-  totalMetricElement.textContent = dashboardSummary?.total_jobs ?? jobs.length;
-  appliedMetricElement.textContent = dashboardSummary?.applied_jobs ?? jobs.filter((job) => job.applied_at).length;
-  ghostedMetricElement.textContent = dashboardSummary?.ghosted_jobs ?? 0;
-  ghostedPercentElement.textContent = `${dashboardSummary?.ghosted_percent ?? 0}% of applied`;
-  flightMetricElement.textContent = dashboardSummary?.in_flight_jobs ?? 0;
-  flightWindowElement.textContent = `${dashboardSummary?.in_flight_window_days ?? windowFilter.value} day window`;
-  feedsMetricElement.textContent = dashboardSummary?.feed_count ?? ingestState?.feed_count ?? 0;
-
-  if (!ingestState) {
-    ingestSummaryElement.textContent = 'Ingest status unavailable.';
-    return;
+  if (diffHours < 24) {
+    return `updated ${diffHours}h ago`;
   }
 
-  const sourceSummary = ingestState.sources.map((source) => `${source.name}: +${source.inserted}`).join(' · ') || 'No sources reported';
-  const errorSummary = ingestState.errors.length ? `Errors: ${ingestState.errors.join(' | ')}` : 'No ingest errors';
-  ingestSummaryElement.textContent = `${sourceSummary} · ${formatRelativeTime(ingestState.updated_at)} · ${errorSummary}`;
-}
-
-function filteredJobs() {
-  const query = searchInput.value.trim().toLowerCase();
-  const statusValue = statusFilter.value;
-
-  return allJobs.filter((job) => {
-    const matchesQuery = !query || [job.title, job.company, job.summary, job.source, job.decision_reason || ''].join(' ').toLowerCase().includes(query);
-    const matchesStatus =
-      statusValue === 'all' ||
-      (statusValue === 'active' && job.status !== 'not_interested') ||
-      job.status === statusValue;
-    return matchesQuery && matchesStatus;
-  });
-}
-
-function formatAppliedDate(value) {
-  if (!value) {
-    return 'Not applied yet';
-  }
-
-  return new Date(value).toLocaleDateString();
+  return `updated ${Math.round(diffHours / 24)}d ago`;
 }
 
 function escapeHtml(value) {
@@ -83,6 +84,308 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function formatAppliedDate(value) {
+  if (!value) {
+    return 'Not applied yet';
+  }
+  return new Date(value).toLocaleDateString();
+}
+
+function formatDaysFromNow(value) {
+  if (!value) {
+    return 'No follow-up scheduled';
+  }
+
+  const diffDays = Math.ceil((new Date(value).getTime() - Date.now()) / 86400000);
+  if (diffDays > 0) {
+    return `Follow-up due in ${diffDays} day${diffDays === 1 ? '' : 's'}`;
+  }
+  if (diffDays === 0) {
+    return 'Follow-up due today';
+  }
+  const overdueDays = Math.abs(diffDays);
+  return `Follow-up overdue by ${overdueDays} day${overdueDays === 1 ? '' : 's'}`;
+}
+
+function batchCountForBucket(bucketKey) {
+  return allJobs.filter((job) => bucketMatches(job, bucketKey)).length;
+}
+
+function bucketMatches(job, bucketKey = activeBucket) {
+  if (bucketKey === 'all') {
+    return true;
+  }
+  if (bucketKey === 'queue') {
+    return job.lifecycle_state === 'queued';
+  }
+  if (bucketKey === 'shortlist') {
+    return job.lifecycle_state === 'shortlisted';
+  }
+  if (bucketKey === 'applied') {
+    return job.lifecycle_state === 'applied';
+  }
+  if (bucketKey === 'in_flight') {
+    return job.lifecycle_state === 'in_flight';
+  }
+  if (bucketKey === 'ghosted') {
+    return job.lifecycle_state === 'ghosted';
+  }
+  if (bucketKey === 'archived') {
+    return job.lifecycle_state === 'archived';
+  }
+  if (bucketKey === 'not_interested') {
+    return job.status === 'not_interested';
+  }
+  return true;
+}
+
+function visibleJobs() {
+  const query = searchInput.value.trim().toLowerCase();
+  return allJobs.filter((job) => {
+    const haystack = [
+      job.title,
+      job.company,
+      job.location,
+      job.summary,
+      job.source,
+      job.decision_reason || '',
+      job.next_action,
+      job.lifecycle_state,
+    ].join(' ').toLowerCase();
+    const matchesQuery = !query || haystack.includes(query);
+    const matchesBucket = bucketMatches(job);
+    const matchesNextAction = activeNextAction === 'all' || job.next_action === activeNextAction;
+    return matchesQuery && matchesBucket && matchesNextAction;
+  });
+}
+
+function updateMetrics(dashboardSummary) {
+  totalMetricElement.textContent = dashboardSummary?.total_jobs ?? allJobs.length;
+  appliedMetricElement.textContent = dashboardSummary?.applied_jobs ?? allJobs.filter((job) => job.applied_at).length;
+  flightMetricElement.textContent = dashboardSummary?.in_flight_jobs ?? 0;
+  flightWindowElement.textContent = `${dashboardSummary?.in_flight_window_days ?? windowFilter.value} day window`;
+  followUpsMetricElement.textContent = dashboardSummary?.follow_ups_due ?? 0;
+  ghostedPercentElement.textContent = `${dashboardSummary?.ghosted_percent ?? 0}% ghosted`;
+  appsDayMetricElement.textContent = dashboardSummary?.apps_per_day ?? 0;
+  appsWeekMetricElement.textContent = dashboardSummary?.apps_per_week ?? 0;
+  timeToApplyMetricElement.textContent = dashboardSummary ? `${dashboardSummary.avg_hours_to_apply}h` : '--';
+  throughputMetricElement.textContent = dashboardSummary?.pipeline_throughput ?? 0;
+}
+
+function renderNextActionLane() {
+  const counts = latestDashboardSummary?.next_action_counts || {};
+  nextActionLaneElement.innerHTML = NEXT_ACTIONS.map((action) => `
+    <button class="next-action-chip${activeNextAction === action.key ? ' is-active' : ''}" type="button" data-next-action-chip="${action.key}">
+      <span>${action.label}</span>
+      <strong>${counts[action.key] ?? 0}</strong>
+    </button>
+  `).join('');
+
+  const currentLabel = NEXT_ACTIONS.find((action) => action.key === activeNextAction)?.label || 'All next actions';
+  nextActionSummaryElement.textContent = activeNextAction === 'all'
+    ? 'Click a lane to compress the queue into the next actual step.'
+    : `Showing ${currentLabel.toLowerCase()} jobs first.`;
+}
+
+function renderBuckets() {
+  bucketListElement.innerHTML = BUCKETS.map((bucket) => `
+    <button class="bucket-button${activeBucket === bucket.key ? ' is-active' : ''}" type="button" data-bucket="${bucket.key}">
+      <span>${bucket.label}</span>
+      <strong>${batchCountForBucket(bucket.key)}</strong>
+    </button>
+  `).join('');
+}
+
+function renderFeedHealth() {
+  if (!latestIngestState) {
+    feedHealthElement.innerHTML = '<div class="empty compact-empty">Feed health unavailable.</div>';
+    ingestSummaryElement.textContent = 'Ingest status unavailable.';
+    return;
+  }
+
+  const feedItems = latestIngestState.sources.length
+    ? latestIngestState.sources.map((source) => `
+        <article class="feed-card">
+          <div>
+            <p class="feed-name">${escapeHtml(source.name)}</p>
+            <p class="feed-meta">+${source.inserted} items added</p>
+          </div>
+          <p class="feed-meta">${formatRelativeTime(source.last_ingest_at || latestIngestState.updated_at)}</p>
+        </article>
+      `).join('')
+    : '<div class="empty compact-empty">No active feeds reported.</div>';
+
+  feedHealthElement.innerHTML = feedItems;
+  const errorSummary = latestIngestState.errors.length ? `Errors: ${latestIngestState.errors.join(' | ')}` : 'No ingest errors';
+  ingestSummaryElement.textContent = `${latestIngestState.feed_count} feeds active · ${formatRelativeTime(latestIngestState.updated_at)} · ${errorSummary}`;
+}
+
+function renderStateMachine() {
+  const counts = latestDashboardSummary?.lifecycle_counts || {};
+  const states = [
+    { key: 'queued', label: 'Queued' },
+    { key: 'shortlisted', label: 'Shortlisted' },
+    { key: 'applied', label: 'Applied' },
+    { key: 'in_flight', label: 'In-Flight' },
+    { key: 'ghosted', label: 'Ghosted' },
+    { key: 'archived', label: 'Archived' },
+  ];
+
+  stateMachineElement.innerHTML = states.map((state) => `
+    <div class="state-node">
+      <span class="state-label">${state.label}</span>
+      <strong>${counts[state.key] ?? 0}</strong>
+    </div>
+  `).join('<span class="state-arrow">→</span>');
+}
+
+function renderBatchStatus(jobs) {
+  const visibleSelected = jobs.filter((job) => selectedJobIds.has(job.id)).length;
+  batchStatusElement.textContent = selectedJobIds.size
+    ? `${selectedJobIds.size} selected · ${visibleSelected} visible in the current slice.`
+    : 'No jobs selected.';
+
+  selectAllVisibleInput.checked = jobs.length > 0 && jobs.every((job) => selectedJobIds.has(job.id));
+}
+
+function buildFollowUpTemplate(job) {
+  return [
+    `Hi ${job.company} team,`,
+    '',
+    `I wanted to follow up on my application for ${job.title}. I remain very interested in the role, especially given the alignment around ${job.source} and the infrastructure-heavy work highlighted in the listing.`,
+    '',
+    'If there is any additional material that would help move the process forward, I can send it over quickly.',
+    '',
+    'Best,',
+    'Kevin',
+  ].join('\n');
+}
+
+function renderBadges(job) {
+  const badges = [
+    `<span class="badge badge-state badge-${job.lifecycle_state}">${job.lifecycle_state.replace('_', ' ')}</span>`,
+    `<span class="badge badge-next">${job.next_action.replace('_', ' ')}</span>`,
+  ];
+
+  if (job.tailoring_required && !job.tailored_resume_exists) {
+    badges.push('<span class="badge badge-tailoring">Tailoring required</span>');
+  }
+  if (job.tailored_resume_exists) {
+    badges.push('<span class="badge badge-ready">Tailored resume ready</span>');
+  }
+  if (job.follow_up_due_at) {
+    badges.push('<span class="badge badge-follow-up">Follow-up scheduled</span>');
+  }
+  if (job.snoozed_until) {
+    badges.push(`<span class="badge badge-snoozed">Snoozed until ${new Date(job.snoozed_until).toLocaleDateString()}</span>`);
+  }
+  return badges.join('');
+}
+
+function renderScoreDetails(job) {
+  const explanation = job.score_explanation;
+  return `
+    <details class="details-block">
+      <summary>Why this score?</summary>
+      <div class="details-grid">
+        <div><span>Skill match</span><strong>${explanation.skill_match_percent}%</strong></div>
+        <div><span>Seniority</span><strong>${escapeHtml(explanation.seniority_match)}</strong></div>
+        <div><span>Tech stack</span><strong>${explanation.tech_stack_overlap}%</strong></div>
+        <div><span>Resume alignment</span><strong>${explanation.resume_keyword_alignment}%</strong></div>
+        <div><span>Company stability</span><strong>${explanation.company_stability_score}</strong></div>
+      </div>
+    </details>
+  `;
+}
+
+function renderJobs(jobs) {
+  jobsElement.innerHTML = '';
+
+  if (!jobs.length) {
+    jobsElement.innerHTML = '<div class="empty">No jobs matched the current filters.</div>';
+    statusElement.textContent = 'API reachable, but nothing matches the current view.';
+    renderBatchStatus(jobs);
+    return;
+  }
+
+  const appliedCount = jobs.filter((job) => job.lifecycle_state === 'applied' || job.lifecycle_state === 'in_flight').length;
+  const followUpCount = jobs.filter((job) => job.next_action === 'follow_up').length;
+  statusElement.textContent = `${jobs.length} jobs shown. ${appliedCount} active applications. ${followUpCount} need follow-up.`;
+
+  jobs.forEach((job) => {
+    const article = document.createElement('article');
+    article.className = 'job-card';
+    const sourceLink = job.source_url
+      ? `<a class="job-link" href="${escapeHtml(job.source_url)}" target="_blank" rel="noreferrer">Open listing</a>`
+      : '<span class="job-link muted-link">No source link</span>';
+    const decisionReason = job.decision_reason
+      ? `<p class="decision-reason"><strong>Why not interested:</strong> ${escapeHtml(job.decision_reason)}</p>`
+      : '';
+    const appliedValue = job.applied_at ? new Date(job.applied_at).toISOString().slice(0, 10) : '';
+    const followUpTemplate = buildFollowUpTemplate(job);
+    article.innerHTML = `
+      <div class="job-card-topline">
+        <label class="select-job">
+          <input type="checkbox" data-select-job="${job.id}" ${selectedJobIds.has(job.id) ? 'checked' : ''}>
+          <span>Select</span>
+        </label>
+        <div class="score-pill">${job.score.toFixed(0)}</div>
+      </div>
+      <div class="job-card-header">
+        <div>
+          <p class="job-company">${escapeHtml(job.company)}</p>
+          <h3>${escapeHtml(job.title)}</h3>
+        </div>
+      </div>
+      <div class="badge-row">${renderBadges(job)}</div>
+      <p class="job-meta">${escapeHtml(job.location)} · ${escapeHtml(job.source)} · ${escapeHtml(job.status)}</p>
+      <p class="job-applied">Applied: ${formatAppliedDate(job.applied_at)}</p>
+      <p class="job-follow-up">${formatDaysFromNow(job.follow_up_due_at)}</p>
+      <p class="job-summary">${escapeHtml(job.summary)}</p>
+      ${decisionReason}
+      ${renderScoreDetails(job)}
+      <div class="job-actions-meta">${sourceLink}</div>
+      <div class="job-actions">
+        <button class="button-secondary" data-action="shortlist" data-job-id="${job.id}" type="button">Shortlist</button>
+        <button data-action="tailor" data-job-id="${job.id}" type="button">Tailor resume</button>
+        <button class="button-secondary" data-action="follow-up" data-job-id="${job.id}" type="button">Send follow-up</button>
+      </div>
+      <div class="job-actions">
+        <label class="action-field">
+          <span>Applied date</span>
+          <input data-applied-input="${job.id}" type="date" value="${appliedValue}">
+        </label>
+        <button data-action="apply" data-job-id="${job.id}" type="button">Mark Applied</button>
+        <button class="button-secondary" data-action="archive" data-job-id="${job.id}" type="button">Archive</button>
+      </div>
+      <div class="job-actions job-actions-secondary">
+        <label class="action-field action-field-wide">
+          <span>Not Interested reason</span>
+          <textarea data-reason-input="${job.id}" rows="2" placeholder="Explain why this role should be filtered out later.">${escapeHtml(job.decision_reason || '')}</textarea>
+        </label>
+        <button data-action="not-interested" data-job-id="${job.id}" type="button">Move to Not Interested</button>
+        <button class="button-secondary" data-action="return" data-job-id="${job.id}" type="button">Return to Queue</button>
+      </div>
+      <details class="details-block follow-up-template">
+        <summary>Follow-up template</summary>
+        <pre>${escapeHtml(followUpTemplate)}</pre>
+      </details>
+    `;
+    jobsElement.appendChild(article);
+  });
+
+  renderBatchStatus(jobs);
+}
+
+function renderView() {
+  updateMetrics(latestDashboardSummary);
+  renderNextActionLane();
+  renderBuckets();
+  renderFeedHealth();
+  renderStateMachine();
+  renderJobs(visibleJobs());
 }
 
 async function updateJob(jobId, payload) {
@@ -102,136 +405,139 @@ async function updateJob(jobId, payload) {
   return response.json();
 }
 
-async function handleMarkApplied(jobId) {
-  const input = document.querySelector(`[data-applied-input="${jobId}"]`);
-  const appliedDate = input?.value;
-  if (!appliedDate) {
-    statusElement.textContent = 'Choose an applied date before marking a job as applied.';
+async function batchUpdateJobs(payload) {
+  const response = await fetch('/api/v1/jobs/batch-update', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Batch update failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+function selectedIds() {
+  return [...selectedJobIds];
+}
+
+async function handleCardAction(action, jobId) {
+  if (action === 'shortlist') {
+    await updateJob(jobId, { status: 'shortlisted', next_action: 'resume_tailoring' });
     return;
   }
 
-  await updateJob(jobId, {
-    status: 'applied',
-    applied_at: new Date(`${appliedDate}T12:00:00Z`).toISOString(),
-  });
-  await loadJobs();
-}
-
-async function handleNotInterested(jobId) {
-  const reasonInput = document.querySelector(`[data-reason-input="${jobId}"]`);
-  const reason = reasonInput?.value?.trim();
-  if (!reason) {
-    statusElement.textContent = 'Not Interested requires a reason so TrashPanda can learn from it later.';
+  if (action === 'tailor') {
+    await updateJob(jobId, { tailored_resume_exists: true, tailoring_required: false, next_action: 'apply_now' });
     return;
   }
 
-  await updateJob(jobId, {
-    status: 'not_interested',
-    decision_reason: reason,
-  });
-  await loadJobs();
-}
-
-async function handleReturnToQueue(jobId) {
-  await updateJob(jobId, {
-    status: 'discovered',
-  });
-  await loadJobs();
-}
-
-function attachCardActions() {
-  jobsElement.querySelectorAll('[data-action="apply"]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      try {
-        await handleMarkApplied(button.dataset.jobId);
-      } catch (error) {
-        statusElement.textContent = `Update failed: ${error.message}`;
+  if (action === 'follow-up') {
+    const job = allJobs.find((item) => item.id === jobId);
+    if (job) {
+      const template = buildFollowUpTemplate(job);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(template);
       }
-    });
-  });
-
-  jobsElement.querySelectorAll('[data-action="not-interested"]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      try {
-        await handleNotInterested(button.dataset.jobId);
-      } catch (error) {
-        statusElement.textContent = `Update failed: ${error.message}`;
-      }
-    });
-  });
-
-  jobsElement.querySelectorAll('[data-action="return"]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      try {
-        await handleReturnToQueue(button.dataset.jobId);
-      } catch (error) {
-        statusElement.textContent = `Update failed: ${error.message}`;
-      }
-    });
-  });
-}
-
-function renderJobs(jobs) {
-  jobsElement.innerHTML = '';
-
-  if (!jobs.length) {
-    jobsElement.innerHTML = '<div class="empty">No jobs matched the current filters.</div>';
-    statusElement.textContent = 'API reachable, but nothing matches the current view.';
+      statusElement.textContent = 'Follow-up template copied and follow-up state advanced.';
+    }
+    await updateJob(jobId, { send_follow_up: true });
     return;
   }
 
-  const appliedCount = jobs.filter((job) => job.status === 'applied').length;
-  const notInterestedCount = jobs.filter((job) => job.status === 'not_interested').length;
-  statusElement.textContent = `${jobs.length} jobs shown. ${appliedCount} applied. ${notInterestedCount} in the Not Interested bucket.`;
+  if (action === 'apply') {
+    const input = document.querySelector(`[data-applied-input="${jobId}"]`);
+    const appliedDate = input?.value;
+    if (!appliedDate) {
+      statusElement.textContent = 'Choose an applied date before marking a job as applied.';
+      return;
+    }
+    await updateJob(jobId, {
+      status: 'applied',
+      applied_at: new Date(`${appliedDate}T12:00:00Z`).toISOString(),
+      next_action: 'follow_up',
+    });
+    return;
+  }
 
-  jobs.forEach((job) => {
-    const article = document.createElement('article');
-    article.className = 'job-card';
-    const sourceLink = job.source_url
-      ? `<a class="job-link" href="${escapeHtml(job.source_url)}" target="_blank" rel="noreferrer">Open listing</a>`
-      : '<span class="job-link muted-link">No source link</span>';
-    const decisionReason = job.decision_reason
-      ? `<p class="decision-reason"><strong>Why not interested:</strong> ${escapeHtml(job.decision_reason)}</p>`
-      : '';
-    const appliedValue = job.applied_at ? new Date(job.applied_at).toISOString().slice(0, 10) : '';
-    article.innerHTML = `
-      <div class="job-card-header">
-        <div>
-          <p class="job-company">${job.company}</p>
-          <h3>${job.title}</h3>
-        </div>
-        <div class="score-pill">${job.score.toFixed(0)}</div>
-      </div>
-      <p class="job-meta">${job.location} · ${job.source} · ${job.status}</p>
-      <p class="job-applied">Applied: ${formatAppliedDate(job.applied_at)}</p>
-      <p class="job-summary">${job.summary}</p>
-      ${decisionReason}
-      <div class="job-actions-meta">${sourceLink}</div>
-      <div class="job-actions">
-        <label class="action-field">
-          <span>Applied date</span>
-          <input data-applied-input="${job.id}" type="date" value="${appliedValue}">
-        </label>
-        <button data-action="apply" data-job-id="${job.id}" type="button">Mark Applied</button>
-      </div>
-      <div class="job-actions job-actions-secondary">
-        <label class="action-field action-field-wide">
-          <span>Not Interested reason</span>
-          <textarea data-reason-input="${job.id}" rows="2" placeholder="Explain why this role should be filtered out later.">${job.decision_reason || ''}</textarea>
-        </label>
-        <button data-action="not-interested" data-job-id="${job.id}" type="button">Move to Not Interested</button>
-        <button class="button-secondary" data-action="return" data-job-id="${job.id}" type="button">Return to Queue</button>
-      </div>
-    `;
-    jobsElement.appendChild(article);
-  });
+  if (action === 'archive') {
+    await updateJob(jobId, { status: 'archived', next_action: 'archive' });
+    return;
+  }
 
-  attachCardActions();
+  if (action === 'not-interested') {
+    const reasonInput = document.querySelector(`[data-reason-input="${jobId}"]`);
+    const reason = reasonInput?.value?.trim();
+    if (!reason) {
+      statusElement.textContent = 'Not Interested requires a reason so TrashPanda can learn from it later.';
+      return;
+    }
+    await updateJob(jobId, { status: 'not_interested', decision_reason: reason, next_action: 'archive' });
+    return;
+  }
+
+  if (action === 'return') {
+    await updateJob(jobId, { status: 'queued', next_action: 'apply_now' });
+  }
 }
 
-function renderView() {
-  updateMetrics(latestIngestState, latestDashboardSummary, allJobs);
-  renderJobs(filteredJobs());
+async function runBatchAction(kind) {
+  const jobIds = selectedIds();
+  if (!jobIds.length) {
+    statusElement.textContent = 'Select one or more jobs before running a batch action.';
+    return;
+  }
+
+  if (kind === 'apply') {
+    if (!batchAppliedDateInput.value) {
+      statusElement.textContent = 'Choose a batch applied date before marking jobs as applied.';
+      return;
+    }
+    await batchUpdateJobs({
+      job_ids: jobIds,
+      status: 'applied',
+      applied_at: new Date(`${batchAppliedDateInput.value}T12:00:00Z`).toISOString(),
+      next_action: 'follow_up',
+    });
+  }
+
+  if (kind === 'not_interested') {
+    const reason = batchReasonInput.value.trim();
+    if (!reason) {
+      statusElement.textContent = 'Batch Not Interested requires a reason.';
+      return;
+    }
+    await batchUpdateJobs({
+      job_ids: jobIds,
+      status: 'not_interested',
+      decision_reason: reason,
+      next_action: 'archive',
+    });
+  }
+
+  if (kind === 'return') {
+    await batchUpdateJobs({
+      job_ids: jobIds,
+      status: 'queued',
+      next_action: 'apply_now',
+    });
+  }
+
+  if (kind === 'snooze') {
+    await batchUpdateJobs({
+      job_ids: jobIds,
+      snooze_days: 30,
+      next_action: 'research',
+    });
+  }
+
+  selectedJobIds.clear();
+  await loadJobs();
 }
 
 async function loadIngestState() {
@@ -239,7 +545,6 @@ async function loadIngestState() {
   if (!response.ok) {
     throw new Error(`Ingest state returned ${response.status}`);
   }
-
   latestIngestState = await response.json();
 }
 
@@ -248,7 +553,6 @@ async function loadDashboardSummary() {
   if (!response.ok) {
     throw new Error(`Dashboard summary returned ${response.status}`);
   }
-
   latestDashboardSummary = await response.json();
 }
 
@@ -272,8 +576,101 @@ async function loadJobs() {
   }
 }
 
+jobsElement.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-action]');
+  if (!button) {
+    return;
+  }
+
+  try {
+    await handleCardAction(button.dataset.action, button.dataset.jobId);
+    await loadJobs();
+  } catch (error) {
+    statusElement.textContent = `Update failed: ${error.message}`;
+  }
+});
+
+jobsElement.addEventListener('change', (event) => {
+  const checkbox = event.target.closest('[data-select-job]');
+  if (!checkbox) {
+    return;
+  }
+
+  if (checkbox.checked) {
+    selectedJobIds.add(checkbox.dataset.selectJob);
+  } else {
+    selectedJobIds.delete(checkbox.dataset.selectJob);
+  }
+  renderBatchStatus(visibleJobs());
+});
+
+nextActionLaneElement.addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-next-action-chip]');
+  if (!chip) {
+    return;
+  }
+  activeNextAction = activeNextAction === chip.dataset.nextActionChip ? 'all' : chip.dataset.nextActionChip;
+  nextActionFilter.value = activeNextAction;
+  renderView();
+});
+
+bucketListElement.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-bucket]');
+  if (!button) {
+    return;
+  }
+  activeBucket = button.dataset.bucket;
+  renderView();
+});
+
+selectAllVisibleInput.addEventListener('change', () => {
+  const jobs = visibleJobs();
+  if (selectAllVisibleInput.checked) {
+    jobs.forEach((job) => selectedJobIds.add(job.id));
+  } else {
+    jobs.forEach((job) => selectedJobIds.delete(job.id));
+  }
+  renderView();
+});
+
+batchApplyButton.addEventListener('click', async () => {
+  try {
+    await runBatchAction('apply');
+  } catch (error) {
+    statusElement.textContent = `Batch update failed: ${error.message}`;
+  }
+});
+
+batchNotInterestedButton.addEventListener('click', async () => {
+  try {
+    await runBatchAction('not_interested');
+  } catch (error) {
+    statusElement.textContent = `Batch update failed: ${error.message}`;
+  }
+});
+
+batchReturnButton.addEventListener('click', async () => {
+  try {
+    await runBatchAction('return');
+  } catch (error) {
+    statusElement.textContent = `Batch update failed: ${error.message}`;
+  }
+});
+
+batchSnoozeButton.addEventListener('click', async () => {
+  try {
+    await runBatchAction('snooze');
+  } catch (error) {
+    statusElement.textContent = `Batch update failed: ${error.message}`;
+  }
+});
+
 refreshButton.addEventListener('click', loadJobs);
 searchInput.addEventListener('input', renderView);
-statusFilter.addEventListener('change', renderView);
+nextActionFilter.addEventListener('change', () => {
+  activeNextAction = nextActionFilter.value;
+  renderView();
+});
 windowFilter.addEventListener('change', loadJobs);
+
 loadJobs();

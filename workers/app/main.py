@@ -157,6 +157,22 @@ def compute_score(text: str, score_keywords: dict[str, int]) -> float:
     return float(min(score, 98))
 
 
+def infer_initial_next_action(company: str, location: str, title: str, summary: str, score: float) -> str:
+    lowered_title = title.lower()
+    lowered_summary = summary.lower()
+    lowered_company = company.lower()
+
+    if any(term in lowered_title for term in ("product specialist", "new grad", "entry-level")):
+        return "archive"
+    if "unknown company" in lowered_company or location == "Unknown":
+        return "research"
+    if score >= 70:
+        return "apply_now"
+    if score >= 58 or any(term in lowered_summary for term in ("terraform", "python", "platform", "infrastructure")):
+        return "resume_tailoring"
+    return "research"
+
+
 def build_summary(description: str, source_url: str) -> str:
     parts = []
     if description:
@@ -202,6 +218,8 @@ def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], inges
 
         job = existing_jobs.get(dedupe_key)
         if job is None:
+            summary = build_summary(description, source_url)
+            next_action = infer_initial_next_action(company, classify_location(searchable_text, ingest_config["location_keywords"]), title, summary, compute_score(searchable_text, ingest_config["score_keywords"]))
             job = Job(
                 title=title,
                 company=company,
@@ -210,26 +228,33 @@ def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], inges
                 source_key=dedupe_key,
                 source_url=source_url or None,
                 score=compute_score(searchable_text, ingest_config["score_keywords"]),
-                status="discovered",
-                summary=build_summary(description, source_url),
+                status="queued",
+                next_action=next_action,
+                tailoring_required=next_action == "resume_tailoring",
+                summary=summary,
             )
         else:
+            summary = build_summary(description, source_url)
             job.title = title
             job.company = company
             job.location = classify_location(searchable_text, ingest_config["location_keywords"])
             job.source_key = dedupe_key
             job.source_url = source_url or None
             job.score = compute_score(searchable_text, ingest_config["score_keywords"])
-            job.summary = build_summary(description, source_url)
-            if job.status not in {"applied", "not_interested"}:
-                job.status = "discovered"
+            job.summary = summary
+            if job.status not in {"applied", "not_interested", "archived", "shortlisted"}:
+                next_action = infer_initial_next_action(job.company, job.location, job.title, summary, job.score)
+                job.status = "queued"
+                job.next_action = next_action
+                if not job.tailored_resume_exists:
+                    job.tailoring_required = next_action == "resume_tailoring"
 
         session.add(job)
 
     stale_job_ids = [
         job.id
         for key, job in existing_jobs.items()
-        if key not in seen_keys and job.status == "discovered" and job.applied_at is None and not job.decision_reason
+        if key not in seen_keys and job.status in {"discovered", "queued"} and job.applied_at is None and not job.decision_reason
     ]
     if stale_job_ids:
         session.execute(delete(Job).where(Job.id.in_(stale_job_ids)))

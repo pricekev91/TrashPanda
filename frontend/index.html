@@ -12,20 +12,19 @@
         <p class="eyebrow">TrashPanda</p>
         <h1>Prioritized job pipeline</h1>
         <p class="lede">
-          First milestone dashboard: live jobs are ingested, stored in Postgres, scored with lightweight heuristics, and rendered here through the app API.
+          Live jobs are ingested, scored, and routed into one workflow lane so the next useful action is obvious instead of buried in card-by-card busywork.
         </p>
       </section>
 
-      <section class="controls-bar">
-        <label class="filter-field">
-          <span>In-flight window</span>
-          <select id="window-filter">
-            <option value="15">15 days</option>
-            <option value="30">30 days</option>
-            <option value="45" selected>45 days</option>
-            <option value="60">60 days</option>
-          </select>
-        </label>
+      <section class="next-actions-panel panel-lite">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Primary workflow</p>
+            <h2>Next Action Queue</h2>
+          </div>
+          <p id="next-action-summary">Loading next actions...</p>
+        </div>
+        <div id="next-action-lane" class="next-action-lane"></div>
       </section>
 
       <section class="metrics" id="metrics">
@@ -38,49 +37,128 @@
           <p class="metric-value" id="metric-applied">--</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Ghosted jobs</p>
-          <p class="metric-value" id="metric-ghosted">--</p>
-          <p class="metric-subvalue" id="metric-ghosted-percent">--</p>
-        </article>
-        <article class="metric-card">
           <p class="metric-label">Jobs in flight</p>
           <p class="metric-value" id="metric-flight">--</p>
           <p class="metric-subvalue" id="metric-flight-window">--</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Feed count</p>
-          <p class="metric-value" id="metric-feeds">--</p>
+          <p class="metric-label">Follow-ups due</p>
+          <p class="metric-value" id="metric-follow-ups">--</p>
+          <p class="metric-subvalue" id="metric-ghosted-percent">--</p>
         </article>
-        <article class="metric-card metric-card-wide">
-          <p class="metric-label">Ingest status</p>
-          <p class="metric-note" id="ingest-summary">Loading ingest status...</p>
+        <article class="metric-card">
+          <p class="metric-label">Apps / day</p>
+          <p class="metric-value" id="metric-apps-day">--</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Apps / week</p>
+          <p class="metric-value" id="metric-apps-week">--</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Time to apply</p>
+          <p class="metric-value" id="metric-time-to-apply">--</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Throughput</p>
+          <p class="metric-value" id="metric-throughput">--</p>
         </article>
       </section>
 
-      <section class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>Scored queue</h2>
-            <p id="status-text">Loading jobs from the API...</p>
+      <section class="workspace">
+        <aside class="sidebar">
+          <section class="sidebar-panel panel-lite">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="section-kicker">Buckets</p>
+                <h2>Lifecycle</h2>
+              </div>
+            </div>
+            <div id="bucket-list" class="bucket-list"></div>
+          </section>
+
+          <section class="sidebar-panel panel-lite">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="section-kicker">Reliability</p>
+                <h2>Feed Health</h2>
+              </div>
+            </div>
+            <div id="feed-health" class="feed-health"></div>
+            <p class="metric-note" id="ingest-summary">Loading ingest status...</p>
+          </section>
+
+          <section class="sidebar-panel panel-lite">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="section-kicker">State machine</p>
+                <h2>Pipeline view</h2>
+              </div>
+            </div>
+            <div id="state-machine" class="state-machine"></div>
+          </section>
+        </aside>
+
+        <section class="panel panel-main">
+          <div class="panel-header">
+            <div>
+              <h2>Scored queue</h2>
+              <p id="status-text">Loading jobs from the API...</p>
+            </div>
+            <div class="panel-actions">
+              <label class="search-field">
+                <span>Search</span>
+                <input id="search-input" type="search" placeholder="Role, company, keyword">
+              </label>
+              <label class="filter-field">
+                <span>Next action</span>
+                <select id="next-action-filter">
+                  <option value="all" selected>All next actions</option>
+                  <option value="apply_now">Apply now</option>
+                  <option value="resume_tailoring">Needs resume tailoring</option>
+                  <option value="research">Needs research</option>
+                  <option value="follow_up">Needs follow-up</option>
+                  <option value="archive">Ready to archive</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>In-flight window</span>
+                <select id="window-filter">
+                  <option value="15">15 days</option>
+                  <option value="30">30 days</option>
+                  <option value="45" selected>45 days</option>
+                  <option value="60">60 days</option>
+                </select>
+              </label>
+              <button id="refresh-button" type="button">Refresh</button>
+            </div>
           </div>
-          <div class="panel-actions">
-            <label class="search-field">
-              <span>Search</span>
-              <input id="search-input" type="search" placeholder="Role, company, keyword">
-            </label>
-            <label class="filter-field">
-              <span>Bucket</span>
-              <select id="status-filter">
-                <option value="active" selected>Active queue</option>
-                <option value="applied">Applied</option>
-                <option value="not_interested">Not interested</option>
-                <option value="all">All</option>
-              </select>
-            </label>
-            <button id="refresh-button" type="button">Refresh</button>
-          </div>
-        </div>
-        <div id="jobs" class="jobs"></div>
+
+          <section class="batch-panel">
+            <div class="batch-header">
+              <label class="batch-select-all">
+                <input id="select-all-visible" type="checkbox">
+                <span>Select visible jobs</span>
+              </label>
+              <p id="batch-status">No jobs selected.</p>
+            </div>
+            <div class="batch-controls">
+              <label class="action-field">
+                <span>Applied date</span>
+                <input id="batch-applied-date" type="date">
+              </label>
+              <label class="action-field action-field-wide">
+                <span>Not Interested reason</span>
+                <textarea id="batch-reason" rows="2" placeholder="Required for batch archive into Not Interested."></textarea>
+              </label>
+              <button id="batch-apply-button" type="button">Batch Mark Applied</button>
+              <button id="batch-not-interested-button" type="button">Batch Move to Not Interested</button>
+              <button class="button-secondary" id="batch-return-button" type="button">Batch Return to Queue</button>
+              <button class="button-secondary" id="batch-snooze-button" type="button">Batch Snooze 30 days</button>
+            </div>
+          </section>
+
+          <div id="jobs" class="jobs"></div>
+        </section>
       </section>
     </main>
 
