@@ -16,18 +16,40 @@
         </p>
       </section>
 
+      <section class="controls-bar">
+        <label class="filter-field">
+          <span>In-flight window</span>
+          <select id="window-filter">
+            <option value="15">15 days</option>
+            <option value="30">30 days</option>
+            <option value="45" selected>45 days</option>
+            <option value="60">60 days</option>
+          </select>
+        </label>
+      </section>
+
       <section class="metrics" id="metrics">
         <article class="metric-card">
           <p class="metric-label">Total jobs</p>
           <p class="metric-value" id="metric-total">--</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Remote</p>
-          <p class="metric-value" id="metric-remote">--</p>
+          <p class="metric-label">Jobs applied to</p>
+          <p class="metric-value" id="metric-applied">--</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Unknown company</p>
-          <p class="metric-value" id="metric-unknown">--</p>
+          <p class="metric-label">Ghosted jobs</p>
+          <p class="metric-value" id="metric-ghosted">--</p>
+          <p class="metric-subvalue" id="metric-ghosted-percent">--</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Jobs in flight</p>
+          <p class="metric-value" id="metric-flight">--</p>
+          <p class="metric-subvalue" id="metric-flight-window">--</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Feed count</p>
+          <p class="metric-value" id="metric-feeds">--</p>
         </article>
         <article class="metric-card metric-card-wide">
           <p class="metric-label">Ingest status</p>
@@ -47,13 +69,12 @@
               <input id="search-input" type="search" placeholder="Role, company, keyword">
             </label>
             <label class="filter-field">
-              <span>Location</span>
-              <select id="location-filter">
+              <span>Bucket</span>
+              <select id="status-filter">
+                <option value="active" selected>Active queue</option>
+                <option value="applied">Applied</option>
+                <option value="not_interested">Not interested</option>
                 <option value="all">All</option>
-                <option value="Remote">Remote</option>
-                <option value="Hybrid">Hybrid</option>
-                <option value="On-site">On-site</option>
-                <option value="Unknown">Unknown</option>
               </select>
             </label>
             <button id="refresh-button" type="button">Refresh</button>

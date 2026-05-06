@@ -12,7 +12,7 @@ from urllib.request import urlopen
 from sqlalchemy import delete, select
 
 from backend.app.config import get_settings
-from backend.app.database import Base, SessionLocal, engine
+from backend.app.database import Base, SessionLocal, engine, ensure_job_schema
 from backend.app.models import Job
 
 
@@ -134,6 +134,12 @@ def normalize_title_name(title: str) -> str:
     return compact_text(cleaned) or "Unknown role"
 
 
+def build_source_key(source_url: str, company: str, title: str) -> str:
+    if source_url:
+        return source_url
+    return f"{company.lower()}::{title.lower()}"
+
+
 def classify_location(text: str, location_keywords: dict[str, str]) -> str:
     lowered = text.lower()
     for needle, label in location_keywords.items():
@@ -174,20 +180,12 @@ def iter_hn_jobs(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
         yield hit
 
 
-def job_exists(session: SessionLocal, source: str, company: str, title: str) -> bool:
-    existing = session.scalar(
-        select(Job.id)
-        .where(Job.source == source)
-        .where(Job.company == company)
-        .where(Job.title == title)
-        .limit(1)
-    )
-    return existing is not None
-
-
 def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], ingest_config: dict[str, Any]) -> int:
     payload = fetch_json(source_config["url"])
-    jobs_to_insert: list[Job] = []
+    existing_jobs = {
+        job.source_key or build_source_key(job.source_url or "", job.company, job.title): job
+        for job in session.query(Job).filter(Job.source == source_config["name"]).all()
+    }
     seen_keys: set[str] = set()
 
     for hit in iter_hn_jobs(payload):
@@ -196,29 +194,47 @@ def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], inges
         source_url = compact_text(hit.get("url") or hit.get("story_url") or "")
         company, title = parse_company_and_title(raw_title)
         searchable_text = " ".join(part for part in (raw_title, description) if part)
-        dedupe_key = source_url or f"{company}::{title}"
+        dedupe_key = build_source_key(source_url, company, title)
 
         if dedupe_key in seen_keys:
             continue
         seen_keys.add(dedupe_key)
 
-        jobs_to_insert.append(
-            Job(
+        job = existing_jobs.get(dedupe_key)
+        if job is None:
+            job = Job(
                 title=title,
                 company=company,
                 location=classify_location(searchable_text, ingest_config["location_keywords"]),
                 source=source_config["name"],
+                source_key=dedupe_key,
+                source_url=source_url or None,
                 score=compute_score(searchable_text, ingest_config["score_keywords"]),
                 status="discovered",
                 summary=build_summary(description, source_url),
             )
-        )
+        else:
+            job.title = title
+            job.company = company
+            job.location = classify_location(searchable_text, ingest_config["location_keywords"])
+            job.source_key = dedupe_key
+            job.source_url = source_url or None
+            job.score = compute_score(searchable_text, ingest_config["score_keywords"])
+            job.summary = build_summary(description, source_url)
+            if job.status not in {"applied", "not_interested"}:
+                job.status = "discovered"
 
-    session.execute(delete(Job).where(Job.source == source_config["name"]))
-    for job in jobs_to_insert:
         session.add(job)
 
-    return len(jobs_to_insert)
+    stale_job_ids = [
+        job.id
+        for key, job in existing_jobs.items()
+        if key not in seen_keys and job.status == "discovered" and job.applied_at is None and not job.decision_reason
+    ]
+    if stale_job_ids:
+        session.execute(delete(Job).where(Job.id.in_(stale_job_ids)))
+
+    return len(seen_keys)
 
 
 def write_ingest_state(summary: dict[str, Any]) -> None:
@@ -227,14 +243,13 @@ def write_ingest_state(summary: dict[str, Any]) -> None:
 
 def run_ingest_cycle() -> int:
     Base.metadata.create_all(bind=engine)
+    ensure_job_schema()
     ensure_runtime_paths()
     ingest_config = load_ingest_config()
     inserted_by_source: dict[str, int] = {}
     errors: list[str] = []
 
     total_jobs = 0
-    unknown_company_jobs = 0
-    remote_jobs = 0
 
     with SessionLocal() as session:
         for source_config in ingest_config.get("sources", []):
@@ -260,8 +275,6 @@ def run_ingest_cycle() -> int:
                 log.info("removed %s demo-seed jobs", deleted)
 
         total_jobs = session.query(Job).count()
-        unknown_company_jobs = session.query(Job).where(Job.company == "Unknown company").count()
-        remote_jobs = session.query(Job).where(Job.location == "Remote").count()
 
     write_ingest_state(
         {
@@ -270,8 +283,7 @@ def run_ingest_cycle() -> int:
             "errors": errors,
             "poll_interval_seconds": ingest_config.get("poll_interval_seconds", 1800),
             "total_jobs": total_jobs,
-            "unknown_company_jobs": unknown_company_jobs,
-            "remote_jobs": remote_jobs,
+            "feed_count": len(inserted_by_source),
         }
     )
     return int(ingest_config.get("poll_interval_seconds", 1800))
