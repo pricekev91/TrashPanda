@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from sqlalchemy import delete, select
@@ -188,10 +188,73 @@ def build_summary(description: str, source_url: str) -> str:
     return summary[:320] if summary else "Source discovered by live ingest."
 
 
-def fetch_json(url: str) -> dict[str, Any]:
+def get_source_timeout_seconds(source_config: dict[str, Any]) -> float:
+    raw_timeout = source_config.get("timeout_seconds", 20)
+    try:
+        parsed = float(raw_timeout)
+    except (TypeError, ValueError):
+        return 20.0
+    return parsed if parsed > 0 else 20.0
+
+
+def get_source_retry_count(source_config: dict[str, Any]) -> int:
+    raw_retry = source_config.get("retry_count", 1)
+    try:
+        parsed = int(raw_retry)
+    except (TypeError, ValueError):
+        return 1
+    return parsed if parsed >= 0 else 1
+
+
+def get_source_retry_backoff_seconds(source_config: dict[str, Any]) -> float:
+    raw_backoff = source_config.get("retry_backoff_seconds", 1)
+    try:
+        parsed = float(raw_backoff)
+    except (TypeError, ValueError):
+        return 1.0
+    return parsed if parsed >= 0 else 1.0
+
+
+def classify_source_error(error: Exception) -> str:
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, HTTPError):
+        return "http_error"
+    if isinstance(error, URLError):
+        if isinstance(error.reason, TimeoutError):
+            return "timeout"
+        return "network_error"
+    if isinstance(error, json.JSONDecodeError):
+        return "invalid_payload"
+    return "unknown_error"
+
+
+def fetch_json(
+    url: str,
+    *,
+    timeout_seconds: float,
+    retry_count: int,
+    retry_backoff_seconds: float,
+) -> dict[str, Any] | list[dict[str, Any]]:
     request = Request(url, headers={"User-Agent": "TrashPanda/0.1 (+self-hosted job ingestion)"})
-    with urlopen(request, timeout=20) as response:
-        return json.load(response)
+    attempts = max(1, retry_count + 1)
+    last_error: Exception | None = None
+
+    for attempt in range(attempts):
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                return json.load(response)
+        except (URLError, HTTPError, TimeoutError, json.JSONDecodeError) as error:
+            last_error = error
+            if attempt + 1 >= attempts:
+                break
+            if retry_backoff_seconds > 0:
+                time.sleep(retry_backoff_seconds)
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError("fetch_json failed without an exception")
 
 
 def iter_hn_jobs(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
@@ -214,7 +277,12 @@ def iter_remoteok_jobs(payload: list[dict[str, Any]]) -> Iterable[dict[str, Any]
 
 
 def ingest_remoteok_source(session: SessionLocal, source_config: dict[str, Any], ingest_config: dict[str, Any]) -> int:
-    payload = fetch_json(source_config["url"])
+    payload = fetch_json(
+        source_config["url"],
+        timeout_seconds=get_source_timeout_seconds(source_config),
+        retry_count=get_source_retry_count(source_config),
+        retry_backoff_seconds=get_source_retry_backoff_seconds(source_config),
+    )
     existing_jobs = {
         job.source_key or build_source_key(job.source_url or "", job.company, job.title): job
         for job in session.query(Job).filter(Job.source == source_config["name"]).all()
@@ -282,7 +350,12 @@ def ingest_remoteok_source(session: SessionLocal, source_config: dict[str, Any],
 
 
 def ingest_hn_source(session: SessionLocal, source_config: dict[str, Any], ingest_config: dict[str, Any]) -> int:
-    payload = fetch_json(source_config["url"])
+    payload = fetch_json(
+        source_config["url"],
+        timeout_seconds=get_source_timeout_seconds(source_config),
+        retry_count=get_source_retry_count(source_config),
+        retry_backoff_seconds=get_source_retry_backoff_seconds(source_config),
+    )
     existing_jobs = {
         job.source_key or build_source_key(job.source_url or "", job.company, job.title): job
         for job in session.query(Job).filter(Job.source == source_config["name"]).all()
@@ -363,6 +436,7 @@ def run_ingest_cycle() -> int:
             "last_ingest_at": None,
             "status": "pending",
             "errors": [],
+            "error_type": None,
         }
         for source_config in ingest_config.get("sources", [])
         if source_config.get("name")
@@ -391,14 +465,17 @@ def run_ingest_cycle() -> int:
                 if source_state is not None:
                     source_state["inserted"] = inserted
                     source_state["last_ingest_at"] = datetime.now(timezone.utc).isoformat()
-                    source_state["status"] = "ok"
+                    source_state["status"] = "ok" if inserted > 0 else "empty"
+                    source_state["error_type"] = None
                 log.info("source %s inserted %s jobs", source_config["name"], inserted)
-            except URLError as error:
-                message = f"source {source_config.get('name', 'unknown')} failed: {error}"
+            except Exception as error:
+                error_type = classify_source_error(error)
+                message = f"source {source_config.get('name', 'unknown')} failed ({error_type}): {error}"
                 errors.append(message)
                 if source_config.get("name") in source_states:
                     source_states[source_config["name"]]["status"] = "failed"
-                    source_states[source_config["name"]]["errors"].append(str(error))
+                    source_states[source_config["name"]]["error_type"] = error_type
+                    source_states[source_config["name"]]["errors"].append(f"{error_type}: {error}")
                 log.warning(message)
 
         session.commit()
