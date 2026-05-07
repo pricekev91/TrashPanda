@@ -39,6 +39,8 @@ TrashPanda operates as a local-first job operations system that can:
 
 Goal: make the ingest-to-dashboard path reliable enough for day-to-day use.
 
+Execution backlog: `docs/milestones/m1-trustworthy-live-ingest.md`
+
 Scope:
 
 - keep current sources working consistently
