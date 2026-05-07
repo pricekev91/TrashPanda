@@ -542,6 +542,11 @@ button {
   border: 1px solid rgba(15, 118, 110, 0.2);
 }
 
+.button-danger {
+  background: var(--accent-alert);
+  color: white;
+}
+
 .details-block {
   border: 1px solid rgba(29, 42, 47, 0.08);
   border-radius: 18px;

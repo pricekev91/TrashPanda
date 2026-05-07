@@ -105,3 +105,11 @@ class BatchJobUpdateRequest(JobUpdateRequest):
 
 class BatchJobUpdateResponse(BaseModel):
     updated_jobs: int
+
+
+class DeleteAllJobsRequest(BaseModel):
+    confirmation: str
+
+
+class DeleteAllJobsResponse(BaseModel):
+    deleted_jobs: int

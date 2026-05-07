@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlalchemy import text
+from sqlalchemy import delete, text
 from sqlalchemy.orm import Session
 
+from backend.app.admin import build_cleared_ingest_state, validate_delete_all_jobs_confirmation
 from backend.app.config import get_settings
 from backend.app.database import Base, engine, ensure_job_schema, get_db
 from backend.app.ingest_state import build_ingest_state_response
@@ -15,6 +16,8 @@ from backend.app.schemas import (
     BatchJobUpdateRequest,
     BatchJobUpdateResponse,
     DashboardSummaryResponse,
+    DeleteAllJobsRequest,
+    DeleteAllJobsResponse,
     HealthResponse,
     IngestStateResponse,
     JobResponse,
@@ -286,6 +289,12 @@ def load_ingest_state() -> dict:
         return json.load(handle)
 
 
+def write_ingest_state(state: dict) -> None:
+    state_path = Path(settings.data_dir) / "ingest-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
 def read_master_resume() -> MasterResumeResponse:
     if not MASTER_RESUME_PATH.exists():
         return MasterResumeResponse(content="", updated_at=None)
@@ -450,3 +459,16 @@ def batch_update_jobs(payload: BatchJobUpdateRequest, db: Session = Depends(get_
 
     db.commit()
     return BatchJobUpdateResponse(updated_jobs=len(jobs))
+
+
+@app.post("/api/v1/jobs/delete-all", response_model=DeleteAllJobsResponse)
+def delete_all_jobs(payload: DeleteAllJobsRequest, db: Session = Depends(get_db)) -> DeleteAllJobsResponse:
+    try:
+        validate_delete_all_jobs_confirmation(payload.confirmation)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    deleted_jobs = db.execute(delete(Job)).rowcount or 0
+    db.commit()
+    write_ingest_state(build_cleared_ingest_state(load_ingest_state()))
+    return DeleteAllJobsResponse(deleted_jobs=deleted_jobs)

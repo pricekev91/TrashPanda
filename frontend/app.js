@@ -23,6 +23,7 @@ const stateMachineElement = document.getElementById('state-machine');
 const searchInput = document.getElementById('search-input');
 const nextActionFilter = document.getElementById('next-action-filter');
 const windowFilter = document.getElementById('window-filter');
+const deleteAllJobsButton = document.getElementById('delete-all-jobs-button');
 const selectAllVisibleInput = document.getElementById('select-all-visible');
 const batchStatusElement = document.getElementById('batch-status');
 const batchAppliedDateInput = document.getElementById('batch-applied-date');
@@ -467,6 +468,23 @@ async function batchUpdateJobs(payload) {
   return response.json();
 }
 
+async function deleteAllJobs(confirmation) {
+  const response = await fetch('/api/v1/jobs/delete-all', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ confirmation }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Delete all jobs failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
 function selectedIds() {
   return [...selectedJobIds];
 }
@@ -583,6 +601,22 @@ async function runBatchAction(kind) {
 
   selectedJobIds.clear();
   await loadJobs();
+}
+
+async function handleDeleteAllJobs() {
+  const confirmation = window.prompt('Type DeleteAllJobs to permanently clear every job record from the database.');
+  if (confirmation === null) {
+    statusElement.textContent = 'Delete All Jobs canceled.';
+    return;
+  }
+
+  const result = await deleteAllJobs(confirmation);
+  selectedJobIds.clear();
+  selectAllVisibleInput.checked = false;
+  batchAppliedDateInput.value = '';
+  batchReasonInput.value = '';
+  await loadJobs();
+  statusElement.textContent = `Deleted ${result.deleted_jobs} jobs from the database.`;
 }
 
 async function loadIngestState() {
@@ -709,6 +743,14 @@ batchSnoozeButton.addEventListener('click', async () => {
     await runBatchAction('snooze');
   } catch (error) {
     statusElement.textContent = `Batch update failed: ${error.message}`;
+  }
+});
+
+deleteAllJobsButton.addEventListener('click', async () => {
+  try {
+    await handleDeleteAllJobs();
+  } catch (error) {
+    statusElement.textContent = `Delete All Jobs failed: ${error.message}`;
   }
 });
 
