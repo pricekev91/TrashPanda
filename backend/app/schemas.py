@@ -47,6 +47,7 @@ class HealthResponse(BaseModel):
 class IngestSourceResponse(BaseModel):
     name: str
     inserted: int
+    status: str = "unknown"
     last_ingest_at: datetime | None = None
     errors: list[str] = []
 

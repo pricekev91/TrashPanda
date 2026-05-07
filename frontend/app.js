@@ -220,7 +220,8 @@ function renderFeedHealth() {
         <article class="feed-card">
           <div>
             <p class="feed-name">${escapeHtml(source.name)}</p>
-            <p class="feed-meta">+${source.inserted} items added</p>
+            <p class="feed-meta">${escapeHtml(source.status || 'unknown')} · +${source.inserted} items added</p>
+            <p class="feed-meta">${escapeHtml(source.errors?.length ? source.errors.join(' | ') : 'No source errors')}</p>
           </div>
           <p class="feed-meta">${formatRelativeTime(source.last_ingest_at || latestIngestState.updated_at)}</p>
         </article>
@@ -228,8 +229,9 @@ function renderFeedHealth() {
     : '<div class="empty compact-empty">No active feeds reported.</div>';
 
   feedHealthElement.innerHTML = feedItems;
+  const failedFeeds = latestIngestState.sources.filter((source) => source.status && source.status !== 'ok').length;
   const errorSummary = latestIngestState.errors.length ? `Errors: ${latestIngestState.errors.join(' | ')}` : 'No ingest errors';
-  ingestSummaryElement.textContent = `${latestIngestState.feed_count} feeds active · ${formatRelativeTime(latestIngestState.updated_at)} · ${errorSummary}`;
+  ingestSummaryElement.textContent = `${latestIngestState.feed_count} feeds configured · ${failedFeeds} degraded · ${formatRelativeTime(latestIngestState.updated_at)} · ${errorSummary}`;
 }
 
 function renderMasterResume(resume) {

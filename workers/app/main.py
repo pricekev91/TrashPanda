@@ -356,7 +356,17 @@ def run_ingest_cycle() -> int:
     ensure_job_schema()
     ensure_runtime_paths()
     ingest_config = load_ingest_config()
-    inserted_by_source: dict[str, int] = {}
+    source_states = {
+        source_config["name"]: {
+            "name": source_config["name"],
+            "inserted": 0,
+            "last_ingest_at": None,
+            "status": "pending",
+            "errors": [],
+        }
+        for source_config in ingest_config.get("sources", [])
+        if source_config.get("name")
+    }
     errors: list[str] = []
 
     total_jobs = 0
@@ -370,13 +380,25 @@ def run_ingest_cycle() -> int:
                     inserted = ingest_remoteok_source(session, source_config, ingest_config)
                 else:
                     errors.append(f"unsupported source kind: {source_config.get('kind')}")
+                    if source_config.get("name") in source_states:
+                        source_states[source_config["name"]]["status"] = "unsupported"
+                        source_states[source_config["name"]]["errors"].append(
+                            f"unsupported source kind: {source_config.get('kind')}"
+                        )
                     continue
 
-                inserted_by_source[source_config["name"]] = inserted
+                source_state = source_states.get(source_config["name"])
+                if source_state is not None:
+                    source_state["inserted"] = inserted
+                    source_state["last_ingest_at"] = datetime.now(timezone.utc).isoformat()
+                    source_state["status"] = "ok"
                 log.info("source %s inserted %s jobs", source_config["name"], inserted)
             except URLError as error:
                 message = f"source {source_config.get('name', 'unknown')} failed: {error}"
                 errors.append(message)
+                if source_config.get("name") in source_states:
+                    source_states[source_config["name"]]["status"] = "failed"
+                    source_states[source_config["name"]]["errors"].append(str(error))
                 log.warning(message)
 
         session.commit()
@@ -392,11 +414,11 @@ def run_ingest_cycle() -> int:
     write_ingest_state(
         {
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "sources": inserted_by_source,
+            "sources": list(source_states.values()),
             "errors": errors,
             "poll_interval_seconds": ingest_config.get("poll_interval_seconds", 1800),
             "total_jobs": total_jobs,
-            "feed_count": len(inserted_by_source),
+            "feed_count": len(source_states),
         }
     )
     return int(ingest_config.get("poll_interval_seconds", 1800))

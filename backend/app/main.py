@@ -9,13 +9,13 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import get_settings
 from backend.app.database import Base, engine, ensure_job_schema, get_db
+from backend.app.ingest_state import build_ingest_state_response
 from backend.app.models import Job
 from backend.app.schemas import (
     BatchJobUpdateRequest,
     BatchJobUpdateResponse,
     DashboardSummaryResponse,
     HealthResponse,
-    IngestSourceResponse,
     IngestStateResponse,
     JobResponse,
     JobUpdateRequest,
@@ -279,7 +279,7 @@ def load_ingest_state() -> dict:
             "total_jobs": 0,
             "feed_count": 0,
             "errors": [],
-            "sources": {},
+            "sources": [],
         }
 
     with state_path.open("r", encoding="utf-8") as handle:
@@ -324,20 +324,7 @@ def list_jobs(db: Session = Depends(get_db)) -> list[JobResponse]:
 
 @app.get("/api/v1/ingest-state", response_model=IngestStateResponse)
 def ingest_state() -> IngestStateResponse:
-    state = load_ingest_state()
-    state_updated_at = state.get("updated_at")
-    sources = [
-        IngestSourceResponse(name=name, inserted=inserted, last_ingest_at=state_updated_at, errors=[])
-        for name, inserted in state.get("sources", {}).items()
-    ]
-    return IngestStateResponse(
-        updated_at=state.get("updated_at"),
-        poll_interval_seconds=state.get("poll_interval_seconds", 1800),
-        total_jobs=state.get("total_jobs", 0),
-        feed_count=state.get("feed_count", len(sources)),
-        errors=state.get("errors", []),
-        sources=sources,
-    )
+    return build_ingest_state_response(load_ingest_state())
 
 
 @app.get("/api/v1/dashboard-summary", response_model=DashboardSummaryResponse)
