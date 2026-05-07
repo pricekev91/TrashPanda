@@ -48,6 +48,20 @@ The application stack will stay technology-separated so layers can change indepe
 
 The architecture baseline lives in `docs/architecture.md`.
 
+## Delivery Roadmap
+
+The project plan lives in `docs/roadmap.md`.
+
+That document is the single source of truth for delivery sequencing, milestone scope, and acceptance criteria. Keep the detailed roadmap there so it is maintained in one place.
+
+Current milestone focus:
+
+1. trustworthy live ingest
+2. resume-aware ranking
+3. workflow operations
+
+Use the README to surface the roadmap. Use the roadmap document to maintain it.
+
 ## Initial Local Runtime
 
 The repository now includes a first runnable milestone scaffold:
